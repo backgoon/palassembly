@@ -3,60 +3,64 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
-# 시험용 집중 키워드 (차별, 평등, 불평등 관련)
-KEYWORDS = ['차별', '평등', '불평등', '인권', '약자', '성별', '괴롭힘']
-
-# 국회 입법예고 목록 URL
+# 국회 입법예고 진행중 목록 URL
 URL = "https://pal.assembly.go.kr/napal/lgslt/lgsltpa/list.do"
 
-def fetch_bills():
+def fetch_top10_bills():
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
-    matched_bills = []
+    bills = []
     
-    # 키워드별로 직접 검색을 시도하여 목록 수집
-    for search_kw in ['차별', '평등', '불평등', '인권']:
-        params = {
-            'searchCondition': '1', # 법률안명 검색
-            'searchKeyword': search_kw
-        }
-        try:
-            response = requests.get(URL, headers=headers, params=params, timeout=10)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
+    try:
+        response = requests.get(URL, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 목록 테이블의 모든 행(row) 탐색
+        rows = soup.select('table tbody tr')
+        
+        for row in rows:
+            cols = row.select('td')
+            if len(cols) < 3:
+                continue
+                
+            # 링크 태그 추출
+            title_tag = row.select_one('a')
+            if not title_tag:
+                continue
+                
+            title = title_tag.text.strip()
+            href = title_tag.get('href', '')
             
-            rows = soup.select('table.board_list tbody tr')
-            for row in rows:
-                cols = row.select('td')
-                if len(cols) < 5:
-                    continue
-                    
-                title_tag = row.select_one('a')
-                if not title_tag:
-                    continue
-                    
-                title = title_tag.text.strip()
-                href = title_tag.get('href', '')
+            # 절대 경로 변환
+            if href.startswith('/'):
+                link = "https://pal.assembly.go.kr" + href
+            elif href.startswith('http'):
+                link = href
+            else:
+                link = "https://pal.assembly.go.kr/napal/lgslt/lgsltpa/" + href
                 
-                # 링크 및 중복 체크
-                link = "https://pal.assembly.go.kr" + href if href.startswith('/') else href
-                proposer = cols[2].text.strip() if len(cols) > 2 else "-"
-                period = cols[4].text.strip() if len(cols) > 4 else "-"
+            # 컬럼 수가 다양할 수 있으므로 안전하게 추출
+            proposer = cols[2].text.strip() if len(cols) > 2 else "-"
+            period = cols[-1].text.strip() if len(cols) > 3 else "-"
+            
+            bills.append({
+                'title': title,
+                'proposer': proposer,
+                'period': period,
+                'link': link
+            })
+            
+            # 최상단 10개만 수집
+            if len(bills) >= 10:
+                break
                 
-                # 중복 수집 방지
-                if not any(b['title'] == title for b in matched_bills):
-                    matched_bills.append({
-                        'title': title,
-                        'proposer': proposer,
-                        'period': period,
-                        'link': link
-                    })
-        except Exception as e:
-            print(f"[{search_kw}] 검색 요청 중 오류 발생: {e}")
+    except Exception as e:
+        print(f"입법예고 목록 수집 중 오류 발생: {e}")
 
-    return matched_bills
+    return bills
 
 def create_mobile_html(bills):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -66,7 +70,7 @@ def create_mobile_html(bills):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>국회 입법예고 모니터링</title>
+    <title>국회 입법예고 모니터링 (테스트)</title>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f7; margin: 0; padding: 15px; color: #333; }}
         .header {{ background: #1c1c1e; color: #fff; padding: 20px; border-radius: 12px; margin-bottom: 15px; }}
@@ -81,21 +85,21 @@ def create_mobile_html(bills):
 </head>
 <body>
     <div class="header">
-        <h1>🏛️ 입법예고 모니터링 (시험 작동)</h1>
+        <h1>🏛️ 국회 입법예고 최신 10건 (테스트)</h1>
         <p>최근 업데이트: {now} (KST)</p>
     </div>
 """
 
     if not bills:
-        html_content += '<div class="empty"><p>현재 진행 중인 입법예고 중 해당 검색어로 조회된 법안이 없습니다.</p></div>'
+        html_content += '<div class="empty"><p>입법예고 목록을 불러오지 못했습니다.</p></div>'
     else:
         for bill in bills:
             html_content += f"""
     <div class="card">
         <h3>{bill['title']}</h3>
-        <div class="info">👤 <b>발의자:</b> {bill['proposer']}</div>
+        <div class="info">👤 <b>발의자/선출:</b> {bill['proposer']}</div>
         <div class="info">📅 <b>예고기간:</b> {bill['period']}</div>
-        <a href="{bill['link']}" target="_blank" class="btn">국회 입법예고 반대 의견 제출 ➡️</a>
+        <a href="{bill['link']}" target="_blank" class="btn">국회 입법예고 상세보기 ➡️</a>
     </div>
 """
 
@@ -108,6 +112,6 @@ def create_mobile_html(bills):
         f.write(html_content)
 
 if __name__ == '__main__':
-    bills = fetch_bills()
-    print(f"수집된 법안 수: {len(bills)}")
+    bills = fetch_top10_bills()
+    print(f"수집된 최신 법안 수: {len(bills)}")
     create_mobile_html(bills)
