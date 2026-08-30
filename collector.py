@@ -3,56 +3,64 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
-KEYWORDS = [
-    '차별', '평등', '인권', '생활동반자', '불평등', '학생인권', 
-    '성별', '괴롭힘', '사립학교', '성교육', '아동기본', '인권교육'
-]
+# 시험용 집중 키워드 (차별, 평등, 불평등 관련)
+KEYWORDS = ['차별', '평등', '불평등', '인권', '약자', '성별', '괴롭힘']
 
+# 국회 입법예고 목록 URL
 URL = "https://pal.assembly.go.kr/napal/lgslt/lgsltpa/list.do"
 
 def fetch_bills():
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
-    try:
-        response = requests.get(URL, headers=headers, timeout=10)
-        response.raise_for_status()
-    except Exception as e:
-        print(f"요청 실패: {e}")
-        return []
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-    matched_bills = []
-    rows = soup.select('table.board_list tbody tr')
     
-    for row in rows:
-        cols = row.select('td')
-        if len(cols) < 5:
-            continue
+    matched_bills = []
+    
+    # 키워드별로 직접 검색을 시도하여 목록 수집
+    for search_kw in ['차별', '평등', '불평등', '인권']:
+        params = {
+            'searchCondition': '1', # 법률안명 검색
+            'searchKeyword': search_kw
+        }
+        try:
+            response = requests.get(URL, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-        title_tag = row.select_one('a')
-        if not title_tag:
-            continue
-            
-        title = title_tag.text.strip()
-        link = "https://pal.assembly.go.kr" + title_tag.get('href', '')
-        proposer = cols[2].text.strip() if len(cols) > 2 else "-"
-        period = cols[4].text.strip() if len(cols) > 4 else "-"
-        
-        if any(keyword in title for keyword in KEYWORDS):
-            matched_bills.append({
-                'title': title,
-                'proposer': proposer,
-                'period': period,
-                'link': link
-            })
-            
+            rows = soup.select('table.board_list tbody tr')
+            for row in rows:
+                cols = row.select('td')
+                if len(cols) < 5:
+                    continue
+                    
+                title_tag = row.select_one('a')
+                if not title_tag:
+                    continue
+                    
+                title = title_tag.text.strip()
+                href = title_tag.get('href', '')
+                
+                # 링크 및 중복 체크
+                link = "https://pal.assembly.go.kr" + href if href.startswith('/') else href
+                proposer = cols[2].text.strip() if len(cols) > 2 else "-"
+                period = cols[4].text.strip() if len(cols) > 4 else "-"
+                
+                # 중복 수집 방지
+                if not any(b['title'] == title for b in matched_bills):
+                    matched_bills.append({
+                        'title': title,
+                        'proposer': proposer,
+                        'period': period,
+                        'link': link
+                    })
+        except Exception as e:
+            print(f"[{search_kw}] 검색 요청 중 오류 발생: {e}")
+
     return matched_bills
 
 def create_mobile_html(bills):
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    # 모바일 카드형 레이아웃 HTML 생성
     html_content = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -73,13 +81,13 @@ def create_mobile_html(bills):
 </head>
 <body>
     <div class="header">
-        <h1>🏛️ 입법예고 모니터링</h1>
+        <h1>🏛️ 입법예고 모니터링 (시험 작동)</h1>
         <p>최근 업데이트: {now} (KST)</p>
     </div>
 """
 
     if not bills:
-        html_content += '<div class="empty"><p>현재 진행 중인 입법예고 중 감지된 관심 법안이 없습니다.</p></div>'
+        html_content += '<div class="empty"><p>현재 진행 중인 입법예고 중 해당 검색어로 조회된 법안이 없습니다.</p></div>'
     else:
         for bill in bills:
             html_content += f"""
@@ -101,4 +109,5 @@ def create_mobile_html(bills):
 
 if __name__ == '__main__':
     bills = fetch_bills()
+    print(f"수집된 법안 수: {len(bills)}")
     create_mobile_html(bills)
